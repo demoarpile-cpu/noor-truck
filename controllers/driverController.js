@@ -984,6 +984,21 @@ const getAvailableMonths = async (req, res) => {
   }
 };
 
+/**
+ * Get all drivers (for dropdowns)
+ */
+const getAllDrivers = async (req, res) => {
+  try {
+    const [drivers] = await pool.execute(
+      'SELECT id, name FROM drivers WHERE deleted_at IS NULL ORDER BY name ASC'
+    );
+    res.json({ success: true, data: drivers });
+  } catch (error) {
+    console.error('Error fetching drivers:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch drivers' });
+  }
+};
+
 module.exports = {
   getDashboard,
   getMyTickets,
@@ -999,6 +1014,7 @@ module.exports = {
   addTruck,
   getEquipmentTypes,
   addNewCustomer,
-  getAvailableMonths
+  getAvailableMonths,
+  getAllDrivers
 };
 
