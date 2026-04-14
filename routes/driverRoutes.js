@@ -21,14 +21,14 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
-    
+
     if (mimetype && extname) {
       return cb(null, true);
     } else {
@@ -52,6 +52,7 @@ router.get('/tickets/:id', driverController.getTicketById);
 // Pay routes
 router.get('/pay', driverController.getMyPay);
 router.get('/pay/:month', driverController.getPayByMonth);
+router.get('/months', driverController.getAvailableMonths);
 
 // Customer list (for dropdown in Add Ticket)
 router.get('/customers', driverController.getCustomers);
@@ -63,6 +64,9 @@ router.delete('/customers/:customer_id', driverController.removeCustomer);
 // Trucks list (for dropdown)
 router.get('/trucks', driverController.getTrucks);
 router.post('/trucks', driverController.addTruck);
+
+// Drivers list (for dropdown)
+router.get('/drivers', driverController.getAllDrivers);
 
 // Equipment types list (for dropdown)
 router.get('/equipment-types', driverController.getEquipmentTypes);
