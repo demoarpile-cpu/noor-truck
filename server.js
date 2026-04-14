@@ -15,6 +15,7 @@ const driverRoutes = require('./routes/driverRoutes');
 const companyRoutes = require('./routes/companyRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');   // NEW
 const paymentRoutes = require('./routes/paymentRoutes');   // NEW
+const inspectionRoutes = require('./routes/inspectionRoutes'); // NEW
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -36,6 +37,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/billing/invoices', invoiceRoutes);  // ← Namespaced to avoid colliding with adminRoutes
 app.use('/api/admin/billing/payments', paymentRoutes);  // ← Namespaced to avoid colliding with adminRoutes
+app.use('/api/inspections', inspectionRoutes); // NEW
 app.use('/api/admin', adminRoutes);
 app.use('/api/driver', driverRoutes);
 app.use('/api/company', companyRoutes);
