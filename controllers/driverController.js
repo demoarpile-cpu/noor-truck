@@ -940,6 +940,37 @@ const getTrucks = async (req, res) => {
 };
 
 /**
+ * Active trailers for inspection dropdown (same pattern as trucks)
+ */
+const getTrailers = async (req, res) => {
+  try {
+    let [columns] = await pool.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'trailers'
+       AND COLUMN_NAME = 'status'`
+    );
+    const hasStatus = columns.length > 0;
+    const query = hasStatus
+      ? `SELECT id, trailer_number FROM trailers WHERE status = 'Active' AND deleted_at IS NULL ORDER BY trailer_number ASC`
+      : `SELECT id, trailer_number FROM trailers WHERE deleted_at IS NULL ORDER BY trailer_number ASC`;
+
+    const [rows] = await pool.execute(query);
+    return res.json({ success: true, data: rows || [] });
+  } catch (error) {
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      return res.json({ success: true, data: [] });
+    }
+    console.error('Error fetching trailers:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch trailers',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Get distinct months for this driver's tickets
  */
 const getAvailableMonths = async (req, res) => {
@@ -1011,6 +1042,7 @@ module.exports = {
   addCustomer,
   removeCustomer,
   getTrucks,
+  getTrailers,
   addTruck,
   getEquipmentTypes,
   addNewCustomer,

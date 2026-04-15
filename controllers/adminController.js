@@ -1954,6 +1954,155 @@ const deleteTruck = async (req, res) => {
 };
 
 /**
+ * Get all trailers (fleet master)
+ */
+const getAllTrailers = async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, trailer_number, trailer_type, status, notes, created_at, updated_at
+       FROM trailers WHERE deleted_at IS NULL ORDER BY trailer_number ASC`
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      return res.json({ success: true, data: [], message: 'Trailers table missing — run DB migration.' });
+    }
+    console.error('Error fetching trailers:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch trailers', error: error.message });
+  }
+};
+
+/**
+ * Create trailer
+ */
+const createTrailer = async (req, res) => {
+  try {
+    const { trailer_number, trailer_type, status, notes } = req.body;
+
+    if (!trailer_number || String(trailer_number).trim() === '') {
+      return res.status(400).json({ success: false, message: 'Trailer number is required' });
+    }
+
+    const [existing] = await pool.execute(
+      'SELECT id FROM trailers WHERE trailer_number = ? AND deleted_at IS NULL',
+      [String(trailer_number).trim()]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, message: 'Trailer number already exists' });
+    }
+
+    const [result] = await pool.execute(
+      `INSERT INTO trailers (trailer_number, trailer_type, status, notes)
+       VALUES (?, ?, ?, ?)`,
+      [
+        String(trailer_number).trim(),
+        trailer_type || null,
+        status || 'Active',
+        notes || null
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Trailer added successfully',
+      data: { id: result.insertId, trailer_number: String(trailer_number).trim(), trailer_type: trailer_type || null, status: status || 'Active', notes: notes || null }
+    });
+  } catch (error) {
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ success: false, message: 'Trailers table missing — run DB migration.' });
+    }
+    console.error('Error creating trailer:', error);
+    return res.status(500).json({ success: false, message: 'Failed to create trailer', error: error.message });
+  }
+};
+
+/**
+ * Update trailer
+ */
+const updateTrailer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { trailer_number, trailer_type, status, notes } = req.body;
+
+    const [found] = await pool.execute(
+      'SELECT id FROM trailers WHERE id = ? AND deleted_at IS NULL',
+      [id]
+    );
+    if (found.length === 0) {
+      return res.status(404).json({ success: false, message: 'Trailer not found' });
+    }
+
+    if (trailer_number) {
+      const [dup] = await pool.execute(
+        'SELECT id FROM trailers WHERE trailer_number = ? AND id != ? AND deleted_at IS NULL',
+        [String(trailer_number).trim(), id]
+      );
+      if (dup.length > 0) {
+        return res.status(400).json({ success: false, message: 'Trailer number already exists' });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+    if (trailer_number !== undefined) {
+      updates.push('trailer_number = ?');
+      values.push(String(trailer_number).trim());
+    }
+    if (trailer_type !== undefined) {
+      updates.push('trailer_type = ?');
+      values.push(trailer_type || null);
+    }
+    if (status !== undefined) {
+      updates.push('status = ?');
+      values.push(status);
+    }
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(notes || null);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    values.push(id);
+    await pool.execute(
+      `UPDATE trailers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      values
+    );
+
+    return res.json({ success: true, message: 'Trailer updated successfully' });
+  } catch (error) {
+    console.error('Error updating trailer:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update trailer', error: error.message });
+  }
+};
+
+/**
+ * Delete trailer (soft)
+ */
+const deleteTrailer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [row] = await pool.execute(
+      'SELECT id FROM trailers WHERE id = ? AND deleted_at IS NULL',
+      [id]
+    );
+    if (row.length === 0) {
+      return res.status(404).json({ success: false, message: 'Trailer not found' });
+    }
+    await pool.execute(
+      'UPDATE trailers SET deleted_at = NOW(), updated_at = NOW() WHERE id = ?',
+      [id]
+    );
+    return res.json({ success: true, message: 'Trailer deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting trailer:', error);
+    return res.status(500).json({ success: false, message: 'Failed to delete trailer', error: error.message });
+  }
+};
+
+/**
  * Get all companies
  */
 const getAllCompanies = async (req, res) => {
@@ -2239,6 +2388,10 @@ module.exports = {
   createTruck,
   updateTruck,
   deleteTruck,
+  getAllTrailers,
+  createTrailer,
+  updateTrailer,
+  deleteTrailer,
   getAllCompanies,
   createCompany,
   updateCompany,

@@ -21,4 +21,10 @@ router.get('/all', isAdminOrCompany, inspectionController.getAllInspections);
 // Driver can only view their own reports (enforced in controller)
 router.get('/:id', inspectionController.getInspectionById);
 
+// Update inspection (accessible by both driver and admin; driver can only update own)
+router.put('/:id', inspectionController.updateInspection);
+
+// Delete inspection (accessible by both driver and admin; driver can only delete own)
+router.delete('/:id', inspectionController.deleteInspection);
+
 module.exports = router;

@@ -86,6 +86,12 @@ router.post('/trucks', adminController.createTruck);
 router.put('/trucks/:id', adminController.updateTruck);
 router.delete('/trucks/:id', adminController.deleteTruck);
 
+// Trailer management routes
+router.get('/trailers', adminController.getAllTrailers);
+router.post('/trailers', adminController.createTrailer);
+router.put('/trailers/:id', adminController.updateTrailer);
+router.delete('/trailers/:id', adminController.deleteTrailer);
+
 // Company management routes
 router.get('/companies', adminController.getAllCompanies);
 router.post('/companies', adminController.createCompany);

@@ -65,6 +65,9 @@ router.delete('/customers/:customer_id', driverController.removeCustomer);
 router.get('/trucks', driverController.getTrucks);
 router.post('/trucks', driverController.addTruck);
 
+// Trailers list (for dropdown)
+router.get('/trailers', driverController.getTrailers);
+
 // Drivers list (for dropdown)
 router.get('/drivers', driverController.getAllDrivers);
 
