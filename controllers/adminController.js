@@ -826,6 +826,8 @@ const updateTicket = async (req, res) => {
       quantity,
       bill_rate,
       pay_rate,
+      total_bill,
+      total_pay,
       status
     } = req.body;
 
@@ -879,6 +881,16 @@ const updateTicket = async (req, res) => {
       values.push(quantity);
     }
 
+    if (total_bill !== undefined) {
+      updates.push('total_bill = ?');
+      values.push(total_bill);
+    }
+
+    if (total_pay !== undefined) {
+      updates.push('total_pay = ?');
+      values.push(total_pay);
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({
         success: false,
@@ -904,12 +916,16 @@ const updateTicket = async (req, res) => {
     const finalBillRate = bill_rate !== undefined ? bill_rate : currentTicket.bill_rate;
     const finalPayRate = pay_rate !== undefined ? pay_rate : currentTicket.pay_rate;
 
-    // Calculate totals
-    updates.push('total_bill = ?');
-    values.push(finalQty * finalBillRate);
+    // Calculate totals only if not manually provided
+    if (total_bill === undefined) {
+      updates.push('total_bill = ?');
+      values.push(finalQty * finalBillRate);
+    }
 
-    updates.push('total_pay = ?');
-    values.push(finalQty * finalPayRate);
+    if (total_pay === undefined) {
+      updates.push('total_pay = ?');
+      values.push(finalQty * finalPayRate);
+    }
 
     values.push(id);
     await pool.execute(
@@ -926,6 +942,39 @@ const updateTicket = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to update ticket',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Delete ticket
+ */
+const deleteTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [result] = await pool.execute(
+      'DELETE FROM tickets WHERE id = ?',
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ticket not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Ticket deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting ticket:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete ticket',
       error: error.message
     });
   }
@@ -2375,6 +2424,7 @@ module.exports = {
   getTicketById,
   updateTicket,
   updateTicketStatus,
+  deleteTicket,
   getDashboardStats,
   generateInvoice,
   downloadInvoice,

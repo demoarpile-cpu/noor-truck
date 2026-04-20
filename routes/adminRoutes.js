@@ -60,6 +60,7 @@ router.get('/tickets', adminController.getAllTickets);
 router.get('/tickets/:id', adminController.getTicketById);
 router.get('/months', adminController.getAvailableMonths);
 router.put('/tickets/:id', adminController.updateTicket);
+router.delete('/tickets/:id', adminController.deleteTicket);
 router.put('/tickets/:id/status', adminController.updateTicketStatus);
 router.get('/months', adminController.getAvailableMonths);
 
