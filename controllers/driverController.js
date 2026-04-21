@@ -15,7 +15,7 @@ const getDashboard = async (req, res) => {
 
     // Get driver info
     const [drivers] = await pool.execute(
-      'SELECT id, name, user_id_code FROM drivers WHERE (id = ? OR user_id = ?)',
+      'SELECT id, name, user_id_code, pay_mode FROM drivers WHERE (id = ? OR user_id = ?)',
       [driverId, req.user.id]
     );
 
@@ -42,8 +42,8 @@ const getDashboard = async (req, res) => {
     // Get weekly hours and pay
     const [weeklyStats] = await pool.execute(
       `SELECT 
-        COALESCE(SUM(quantity), 0) as total_hours,
-        COALESCE(SUM(total_pay), 0) as estimated_pay
+        COALESCE(SUM(COALESCE(pay_quantity, quantity) + extra_hours), 0) as total_hours,
+        COALESCE(SUM(total_pay + gst_amount), 0) as estimated_pay
        FROM tickets
        WHERE driver_id = ?
        AND date >= ? AND date <= ?
@@ -68,7 +68,8 @@ const getDashboard = async (req, res) => {
         driver: {
           id: driver.id,
           name: driver.name,
-          user_id_code: driver.user_id_code
+          user_id_code: driver.user_id_code,
+          pay_mode: driver.pay_mode || 'Driver'
         },
         weeklySnapshot: {
           totalHours: parseFloat(weeklyStats[0].total_hours),
@@ -319,9 +320,12 @@ const getMyPay = async (req, res) => {
 
     let query = `
       SELECT 
-        date, customer, ticket_number, quantity as hours, total_pay as amount, status
-      FROM tickets
-      WHERE driver_id = ? AND deleted_at IS NULL
+        t.date, t.customer, t.ticket_number, t.quantity as hours, 
+        t.pay_quantity, t.extra_hours, t.gst_amount,
+        t.total_pay as amount, t.status, d.pay_mode
+      FROM tickets t
+      JOIN drivers d ON t.driver_id = d.id
+      WHERE t.driver_id = ? AND t.deleted_at IS NULL
     `;
     const params = [actualDriverId];
 
@@ -371,7 +375,14 @@ const getMyPay = async (req, res) => {
 
     // Calculate totals
     const totalHours = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.hours || 0), 0);
+    const payHours = tickets.reduce((sum, ticket) => {
+      const pQty = (parseFloat(ticket.pay_quantity) || parseFloat(ticket.hours || 0));
+      return sum + pQty;
+    }, 0);
+    const extraHours = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.extra_hours || 0), 0);
     const grossPay = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.amount || 0), 0);
+    const totalGst = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.gst_amount || 0), 0);
+    const payMode = tickets.length > 0 ? tickets[0].pay_mode : 'Driver';
 
     // Determine status (all approved = "Up-to-date", otherwise "Pending")
     const allApproved = tickets.every(ticket => ticket.status === 'Approved');
@@ -382,14 +393,25 @@ const getMyPay = async (req, res) => {
       data: {
         summary: {
           totalHours,
+          payHours,
+          extraHours,
           grossPay,
+          totalGst,
+          netPay: grossPay + totalGst,
+          payMode,
           status: overallStatus
         },
-        tickets: tickets.map(ticket => ({
-          ...ticket,
-          hours: parseFloat(ticket.hours),
-          amount: parseFloat(ticket.amount)
-        }))
+        tickets: tickets.map(ticket => {
+          const pQty = (parseFloat(ticket.pay_quantity) || parseFloat(ticket.hours || 0));
+          return {
+            ...ticket,
+            hours: parseFloat(ticket.hours),
+            pay_quantity: pQty,
+            extra_hours: parseFloat(ticket.extra_hours || 0),
+            gst_amount: parseFloat(ticket.gst_amount || 0),
+            amount: parseFloat(ticket.amount)
+          };
+        })
       }
     });
   } catch (error) {
@@ -1016,6 +1038,29 @@ const getAvailableMonths = async (req, res) => {
 };
 
 /**
+ * Get driver profile
+ */
+const getDriverProfile = async (req, res) => {
+  try {
+    const driverId = req.user.driverId || req.user.id;
+    const [drivers] = await pool.execute(
+      `SELECT d.id, d.name, d.user_id_code, d.pay_mode, d.phone, d.default_pay_rate, u.email
+       FROM drivers d
+       LEFT JOIN users u ON d.user_id = u.id
+       WHERE (d.id = ? OR d.user_id = ?)`,
+      [driverId, req.user.id]
+    );
+    if (drivers.length === 0) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+    return res.json({ success: true, data: drivers[0] });
+  } catch (error) {
+    console.error('Error fetching driver profile:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch profile', error: error.message });
+  }
+};
+
+/**
  * Get all drivers (for dropdowns)
  */
 const getAllDrivers = async (req, res) => {
@@ -1047,6 +1092,7 @@ module.exports = {
   getEquipmentTypes,
   addNewCustomer,
   getAvailableMonths,
-  getAllDrivers
+  getAllDrivers,
+  getDriverProfile
 };
 

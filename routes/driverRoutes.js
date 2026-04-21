@@ -43,6 +43,7 @@ router.use(isDriver);
 
 // Dashboard routes
 router.get('/dashboard', driverController.getDashboard);
+router.get('/profile', driverController.getDriverProfile);
 
 // Ticket routes
 router.get('/tickets', driverController.getMyTickets);

@@ -90,7 +90,7 @@ const ensureTicketColumns = async () => {
 const getAllDrivers = async (req, res) => {
   try {
     const [drivers] = await pool.execute(
-      `SELECT d.id, d.user_id, d.user_id_code, d.name, d.phone, d.default_pay_rate, u.email, u.created_at
+      `SELECT d.id, d.user_id, d.user_id_code, d.name, d.phone, d.default_pay_rate, d.pay_mode, u.email, u.created_at
        FROM drivers d
        JOIN users u ON d.user_id = u.id
        WHERE d.deleted_at IS NULL AND u.deleted_at IS NULL
@@ -116,7 +116,7 @@ const getAllDrivers = async (req, res) => {
  */
 const createDriver = async (req, res) => {
   try {
-    const { user_id_code, name, email, phone, default_pay_rate, pin } = req.body;
+    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode } = req.body;
 
     // Validate required fields
     if (!user_id_code || !name || !email || !default_pay_rate || !pin) {
@@ -210,6 +210,11 @@ const createDriver = async (req, res) => {
         driverInsertVals.splice(1, 0, 1); // Default company_id if column exists
       }
 
+      if (pay_mode && driverExistingColumns.includes('pay_mode')) {
+        driverInsertCols.push('pay_mode');
+        driverInsertVals.push(pay_mode);
+      }
+
       // Create driver record
       await connection.execute(
         `INSERT INTO drivers (${driverInsertCols.join(', ')}) VALUES (${driverInsertVals.map(() => '?').join(', ')})`,
@@ -244,7 +249,7 @@ const createDriver = async (req, res) => {
 const updateDriver = async (req, res) => {
   try {
     const { id } = req.params;
-    const { user_id_code, name, email, phone, default_pay_rate, pin } = req.body;
+    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode } = req.body;
 
     // Check if driver exists
     const [drivers] = await pool.execute(
@@ -291,6 +296,11 @@ const updateDriver = async (req, res) => {
     if (default_pay_rate !== undefined) {
       updates.push('default_pay_rate = ?');
       values.push(default_pay_rate);
+    }
+
+    if (pay_mode) {
+      updates.push('pay_mode = ?');
+      values.push(pay_mode);
     }
 
     if (email) {
@@ -689,7 +699,7 @@ const getAllTickets = async (req, res) => {
     const { startDate, endDate, customer, driver, status, search } = req.query;
 
     let query = `
-      SELECT t.*, d.name as driver_name, d.user_id_code,
+      SELECT t.*, d.name as driver_name, d.user_id_code, d.pay_mode as driver_pay_mode,
              c.name as customer_name, c.id as customer_id_fk
       FROM tickets t
       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
@@ -828,7 +838,10 @@ const updateTicket = async (req, res) => {
       pay_rate,
       total_bill,
       total_pay,
-      status
+      status,
+      pay_quantity,
+      extra_hours,
+      gst_amount
     } = req.body;
 
     const updates = [];
@@ -881,6 +894,21 @@ const updateTicket = async (req, res) => {
       values.push(quantity);
     }
 
+    if (pay_quantity !== undefined) {
+      updates.push('pay_quantity = ?');
+      values.push(pay_quantity);
+    }
+
+    if (extra_hours !== undefined) {
+      updates.push('extra_hours = ?');
+      values.push(extra_hours);
+    }
+
+    if (gst_amount !== undefined) {
+      updates.push('gst_amount = ?');
+      values.push(gst_amount);
+    }
+
     if (total_bill !== undefined) {
       updates.push('total_bill = ?');
       values.push(total_bill);
@@ -900,7 +928,10 @@ const updateTicket = async (req, res) => {
 
     // Get current ticket to recalculate totals
     const [tickets] = await pool.execute(
-      'SELECT quantity, bill_rate, pay_rate FROM tickets WHERE id = ?',
+      `SELECT t.quantity, t.pay_quantity, t.extra_hours, t.bill_rate, t.pay_rate, d.pay_mode 
+       FROM tickets t 
+       LEFT JOIN drivers d ON t.driver_id = d.id 
+       WHERE t.id = ?`,
       [id]
     );
 
@@ -913,6 +944,8 @@ const updateTicket = async (req, res) => {
 
     const currentTicket = tickets[0];
     const finalQty = quantity !== undefined ? quantity : currentTicket.quantity;
+    const finalPayQty = pay_quantity !== undefined ? pay_quantity : currentTicket.pay_quantity;
+    const finalExtraHours = extra_hours !== undefined ? extra_hours : currentTicket.extra_hours;
     const finalBillRate = bill_rate !== undefined ? bill_rate : currentTicket.bill_rate;
     const finalPayRate = pay_rate !== undefined ? pay_rate : currentTicket.pay_rate;
 
@@ -923,8 +956,16 @@ const updateTicket = async (req, res) => {
     }
 
     if (total_pay === undefined) {
+      const calculatedPay = (parseFloat(finalPayQty || finalQty) + parseFloat(finalExtraHours || 0)) * finalPayRate;
       updates.push('total_pay = ?');
-      values.push(finalQty * finalPayRate);
+      values.push(calculatedPay);
+
+      // Handle GST for sub-contractors if total_pay is re-calculated
+      if (gst_amount === undefined && currentTicket.pay_mode === 'Sub-contractor') {
+        const calculatedGst = calculatedPay * 0.05;
+        updates.push('gst_amount = ?');
+        values.push(calculatedGst);
+      }
     }
 
     values.push(id);
@@ -1384,7 +1425,7 @@ const generateSettlement = async (req, res) => {
 
     // Get driver info
     const [drivers] = await pool.execute(
-      'SELECT id, name, user_id_code FROM drivers WHERE id = ?',
+      'SELECT id, name, user_id_code, pay_mode FROM drivers WHERE id = ?',
       [driverId]
     );
 
@@ -1409,7 +1450,9 @@ const generateSettlement = async (req, res) => {
       [driverId, startDate, endDate]
     );
 
-    const totalPay = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.total_pay), 0);
+    const totalPay = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.total_pay || 0), 0);
+    const totalGst = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.gst_amount || 0), 0);
+    const grandTotal = totalPay + totalGst;
 
     return res.json({
       success: true,
@@ -1417,12 +1460,15 @@ const generateSettlement = async (req, res) => {
         driver: {
           id: driver.id,
           name: driver.name,
-          user_id_code: driver.user_id_code
+          user_id_code: driver.user_id_code,
+          pay_mode: driver.pay_mode
         },
         startDate,
         endDate,
         tickets,
-        totalPay
+        totalPay,
+        totalGst,
+        grandTotal
       }
     });
   } catch (error) {
@@ -1575,7 +1621,7 @@ const sendSettlementEmailHandler = async (req, res) => {
       companyProfile
     });
 
-    const totalPay = tickets.reduce((sum, t) => sum + parseFloat(t.total_pay || 0), 0);
+    const totalPay = tickets.reduce((sum, t) => sum + parseFloat(t.total_pay || 0) + parseFloat(t.gst_amount || 0), 0);
 
     const emailResult = await sendSettlementEmail({
       to: recipientEmail,

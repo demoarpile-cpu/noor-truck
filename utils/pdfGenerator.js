@@ -334,23 +334,40 @@ const generateSettlementPDF = async (data) => {
 
     curY = drawTblHdr(currentPage, curY);
 
-    let grandTotal = 0;
+    let subtotal = 0;
+    let totalGst = 0;
     tickets.forEach((ticket, idx) => {
         if (curY < 80) { currentPage = pdfDoc.addPage([PG_W, PG_H]); curY = drawTblHdr(currentPage, PG_H - 50); }
         const CW = [70, 60, 160, 45, 55, 65];
-        const amt = parseFloat(ticket.total_pay || 0); grandTotal += amt;
+        const amt = parseFloat(ticket.total_pay || 0);
+        const gst = parseFloat(ticket.gst_amount || 0);
+        subtotal += amt;
+        totalGst += gst;
+
         if (idx % 2 === 0) currentPage.drawRectangle({ x: ML, y: curY - 12, width: COL_R - ML, height: 16, color: C_LIGHT });
         let cx = ML;
         currentPage.drawText(new Date(ticket.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), { x: cx + 5, y: curY, size: 8, font }); cx += CW[0] + 5;
         currentPage.drawText(String(ticket.ticket_number || '').substring(0, 10), { x: cx + 5, y: curY, size: 8, font }); cx += CW[1] + 5;
         currentPage.drawText(String(ticket.equipment_type || '').substring(0, 30), { x: cx + 5, y: curY, size: 8, font }); cx += CW[2] + 5;
-        dR(currentPage, parseFloat(ticket.quantity).toFixed(1), cx + CW[3], curY, 8, font); cx += CW[3] + 5;
+        dR(currentPage, parseFloat(ticket.pay_quantity || ticket.quantity).toFixed(1), cx + CW[3], curY, 8, font); cx += CW[3] + 5;
         dR(currentPage, `$${parseFloat(ticket.pay_rate).toFixed(2)}`, cx + CW[4], curY, 8, font); cx += CW[4] + 5;
         dR(currentPage, `$${amt.toFixed(2)}`, cx + CW[5], curY, 8, boldFont, C_PRIMARY);
         curY -= 18;
     });
 
     curY -= 20;
+    if (totalGst > 0) {
+        currentPage.drawText('Subtotal:', { x: COL_R - 180, y: curY, size: 10, font, color: C_MID });
+        dR(currentPage, `$${subtotal.toFixed(2)}`, COL_R, curY, 10, font, C_DARK);
+        curY -= 16;
+        currentPage.drawText('GST (5%):', { x: COL_R - 180, y: curY, size: 10, font, color: C_MID });
+        dR(currentPage, `$${totalGst.toFixed(2)}`, COL_R, curY, 10, font, C_DARK);
+        curY -= 10;
+        currentPage.drawRectangle({ x: COL_R - 180, y: curY, width: 180, height: 1, color: C_PRIMARY });
+        curY -= 18;
+    }
+
+    const grandTotal = subtotal + totalGst;
     currentPage.drawText('GRAND TOTAL PAY:', { x: COL_R - 180, y: curY, size: 12, font: boldFont, color: C_PRIMARY });
     dR(currentPage, `$${grandTotal.toFixed(2)}`, COL_R, curY, 12, boldFont, C_PRIMARY);
 
