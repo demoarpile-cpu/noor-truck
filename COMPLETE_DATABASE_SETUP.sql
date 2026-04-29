@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS drivers (
   phone VARCHAR(20),
   default_pay_rate DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
   pin VARCHAR(255) NOT NULL,
+  pay_mode ENUM('Driver', 'Sub-contractor') DEFAULT 'Driver',
+  gst_number VARCHAR(50) DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -173,6 +175,9 @@ CREATE TABLE IF NOT EXISTS tickets (
   total_bill DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
   total_pay DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
   status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+  pay_quantity DECIMAL(10, 2) DEFAULT 0.00,
+  extra_hours DECIMAL(10, 2) DEFAULT 0.00,
+  gst_amount DECIMAL(10, 2) DEFAULT 0.00,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
@@ -268,8 +273,46 @@ INSERT INTO users (email, password, role, company_id) VALUES
 ON DUPLICATE KEY UPDATE company_id=@default_company_id;
 
 -- ============================================
+-- STEP 6: AUTO-PATCH MISSING COLUMNS (For Live DB)
+-- ============================================
+
+-- Function to add column if not exists
+DROP PROCEDURE IF EXISTS AddColumnIfMissing;
+DELIMITER //
+CREATE PROCEDURE AddColumnIfMissing(
+    IN tableName VARCHAR(64),
+    IN colName VARCHAR(64),
+    IN colDef VARCHAR(255)
+)
+BEGIN
+    IF NOT EXISTS (
+        SELECT * FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = tableName
+        AND COLUMN_NAME = colName
+    ) THEN
+        SET @sql = CONCAT('ALTER TABLE ', tableName, ' ADD COLUMN ', colName, ' ', colDef);
+        PREPARE stmt FROM @sql;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
+
+-- Patch Drivers Table
+CALL AddColumnIfMissing('drivers', 'pay_mode', "ENUM('Driver', 'Sub-contractor') DEFAULT 'Driver'");
+CALL AddColumnIfMissing('drivers', 'gst_number', "VARCHAR(50) DEFAULT NULL");
+
+-- Patch Tickets Table
+CALL AddColumnIfMissing('tickets', 'pay_quantity', "DECIMAL(10, 2) DEFAULT 0.00");
+CALL AddColumnIfMissing('tickets', 'extra_hours', "DECIMAL(10, 2) DEFAULT 0.00");
+CALL AddColumnIfMissing('tickets', 'gst_amount', "DECIMAL(10, 2) DEFAULT 0.00");
+
+DROP PROCEDURE IF EXISTS AddColumnIfMissing;
+
+-- ============================================
 -- SUCCESS MESSAGE
 -- ============================================
-SELECT 'Database setup completed successfully! Login should work now.' AS Status;
+SELECT 'Database setup and patching completed successfully!' AS Status;
 SELECT 'Default admin credentials: email: admin@m.com, password: password' AS LoginInfo;
 

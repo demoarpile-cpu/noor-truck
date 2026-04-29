@@ -16,28 +16,29 @@ const companyRoutes = require('./routes/companyRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');   // NEW
 const paymentRoutes = require('./routes/paymentRoutes');   // NEW
 const inspectionRoutes = require('./routes/inspectionRoutes'); // NEW
+const { ensureDatabaseSchema } = require('./utils/dbMigration'); // AUTO-MIGRATION
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: '*', // Allow all origins for now
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma'],
   credentials: false
 }));
-app.use(express.json({ limit: '10mb' })); // Parse JSON bodies with limit for base64 images
-app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Parse URL-encoded bodies
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Routes — specific routes BEFORE generic /api/admin to avoid shadowing
+// Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/admin/billing/invoices', invoiceRoutes);  // ← Namespaced to avoid colliding with adminRoutes
-app.use('/api/admin/billing/payments', paymentRoutes);  // ← Namespaced to avoid colliding with adminRoutes
-app.use('/api/inspections', inspectionRoutes); // NEW
+app.use('/api/admin/billing/invoices', invoiceRoutes);
+app.use('/api/admin/billing/payments', paymentRoutes);
+app.use('/api/inspections', inspectionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/driver', driverRoutes);
 app.use('/api/company', companyRoutes);
@@ -57,10 +58,19 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-});
+// Start server — auto-migration runs before server starts
+const startServer = async () => {
+  try {
+    await ensureDatabaseSchema(); // ← DB me missing columns add karega
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+  }
+};
+
+startServer();
 
 module.exports = app;

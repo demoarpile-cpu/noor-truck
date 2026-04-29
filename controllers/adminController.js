@@ -90,7 +90,7 @@ const ensureTicketColumns = async () => {
 const getAllDrivers = async (req, res) => {
   try {
     const [drivers] = await pool.execute(
-      `SELECT d.id, d.user_id, d.user_id_code, d.name, d.phone, d.default_pay_rate, d.pay_mode, u.email, u.created_at
+      `SELECT d.id, d.user_id, d.user_id_code, d.name, d.phone, d.default_pay_rate, d.pay_mode, d.gst_number, u.email, u.created_at
        FROM drivers d
        JOIN users u ON d.user_id = u.id
        WHERE d.deleted_at IS NULL AND u.deleted_at IS NULL
@@ -112,11 +112,46 @@ const getAllDrivers = async (req, res) => {
 };
 
 /**
+ * Get driver by ID
+ */
+const getDriverById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [drivers] = await pool.execute(
+      `SELECT d.id, d.user_id, d.user_id_code, d.name, d.phone, d.default_pay_rate, d.pay_mode, d.gst_number, u.email, u.created_at
+       FROM drivers d
+       JOIN users u ON d.user_id = u.id
+       WHERE d.id = ? AND d.deleted_at IS NULL AND u.deleted_at IS NULL`,
+      [id]
+    );
+
+    if (drivers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: drivers[0]
+    });
+  } catch (error) {
+    console.error('Error fetching driver by ID:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch driver',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Create a new driver
  */
 const createDriver = async (req, res) => {
   try {
-    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode } = req.body;
+    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode, gst_number } = req.body;
 
     // Validate required fields
     if (!user_id_code || !name || !email || !default_pay_rate || !pin) {
@@ -183,6 +218,10 @@ const createDriver = async (req, res) => {
          AND TABLE_NAME = 'drivers'`
       );
       const driverExistingColumns = driverColumns.map(col => col.COLUMN_NAME);
+      console.log('--- DB Columns Check ---');
+      console.log('Existing columns in drivers table:', driverExistingColumns);
+      console.log('Received gst_number:', gst_number);
+      console.log('--- End Check ---');
 
       // Build user INSERT query dynamically
       const userInsertCols = ['email', 'password', 'role'];
@@ -213,6 +252,11 @@ const createDriver = async (req, res) => {
       if (pay_mode && driverExistingColumns.includes('pay_mode')) {
         driverInsertCols.push('pay_mode');
         driverInsertVals.push(pay_mode);
+      }
+
+      if (gst_number !== undefined && driverExistingColumns.includes('gst_number')) {
+        driverInsertCols.push('gst_number');
+        driverInsertVals.push(gst_number || null);
       }
 
       // Create driver record
@@ -249,7 +293,7 @@ const createDriver = async (req, res) => {
 const updateDriver = async (req, res) => {
   try {
     const { id } = req.params;
-    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode } = req.body;
+    const { user_id_code, name, email, phone, default_pay_rate, pin, pay_mode, gst_number } = req.body;
 
     // Check if driver exists
     const [drivers] = await pool.execute(
@@ -301,6 +345,11 @@ const updateDriver = async (req, res) => {
     if (pay_mode) {
       updates.push('pay_mode = ?');
       values.push(pay_mode);
+    }
+
+    if (gst_number !== undefined) {
+      updates.push('gst_number = ?');
+      values.push(gst_number || null);
     }
 
     if (email) {
@@ -1071,30 +1120,30 @@ const getDashboardStats = async (req, res) => {
     );
     const unbilledTickets = unbilledResult[0].count;
 
-    // Revenue this month
-    const [revenueResult] = await pool.execute(
-      `SELECT COALESCE(SUM(total_bill), 0) as revenue
+    // Revenue stats
+    const [revenueStats] = await pool.execute(
+      `SELECT 
+        COALESCE(SUM(CASE WHEN MONTH(date) = ? AND YEAR(date) = ? THEN total_bill ELSE 0 END), 0) as monthlyRevenue,
+        COALESCE(SUM(total_bill), 0) as totalRevenue,
+        COALESCE(SUM(CASE WHEN MONTH(date) = ? AND YEAR(date) = ? THEN total_pay ELSE 0 END), 0) as monthlyPay,
+        COALESCE(SUM(total_pay), 0) as totalPay
        FROM tickets
        WHERE status = 'Approved'
-       AND MONTH(date) = ? AND YEAR(date) = ?
        AND deleted_at IS NULL`,
-      [currentMonth, currentYear]
+      [currentMonth, currentYear, currentMonth, currentYear]
     );
-    const revenue = parseFloat(revenueResult[0].revenue);
 
-    // Driver pay this month
-    const [payResult] = await pool.execute(
-      `SELECT COALESCE(SUM(total_pay), 0) as pay
-       FROM tickets
-       WHERE status = 'Approved'
-       AND MONTH(date) = ? AND YEAR(date) = ?
-       AND deleted_at IS NULL`,
-      [currentMonth, currentYear]
-    );
-    const driverPay = parseFloat(payResult[0].pay);
+    const { monthlyRevenue, totalRevenue, monthlyPay, totalPay } = revenueStats[0];
+
+    // Convert to floats
+    const revenue = parseFloat(monthlyRevenue);
+    const totalRev = parseFloat(totalRevenue);
+    const driverPay = parseFloat(monthlyPay);
+    const totalP = parseFloat(totalPay);
 
     // Estimated profit
     const estimatedProfit = revenue - driverPay;
+    const totalProfit = totalRev - totalP;
 
     // Weekly breakdown for chart
     const [weeklyData] = await pool.execute(
@@ -1105,6 +1154,7 @@ const getDashboardStats = async (req, res) => {
        FROM tickets
        WHERE status = 'Approved'
        AND MONTH(date) = ? AND YEAR(date) = ?
+       AND deleted_at IS NULL
        GROUP BY WEEK(date, 1)
        ORDER BY week`,
       [currentMonth, currentYear]
@@ -1117,6 +1167,9 @@ const getDashboardStats = async (req, res) => {
         revenue,
         driverPay,
         estimatedProfit,
+        totalRevenue: totalRev,
+        totalDriverPay: totalP,
+        totalEstimatedProfit: totalProfit,
         weeklyData
       }
     });
@@ -1195,7 +1248,7 @@ const generateInvoice = async (req, res) => {
         customerEmail: customerEmail,
         startDate,
         endDate,
-        tickets,
+        tickets: tickets,
         subtotal,
         gst,
         total,
@@ -1254,6 +1307,7 @@ const downloadInvoice = async (req, res) => {
     }
 
     console.log(`[PDF Download] Found ${tickets.length} tickets. Generating PDF...`);
+    const processedTickets = tickets;
 
     const [compSettings] = await pool.execute('SELECT * FROM company_settings LIMIT 1');
     const companyProfile = compSettings[0] || { company_name: 'Noor Trucking Inc.', email: 'accounting@noortruckinginc.com' };
@@ -1265,7 +1319,7 @@ const downloadInvoice = async (req, res) => {
       customerPhone: customer.phone,
       startDate,
       endDate,
-      tickets,
+      tickets: processedTickets,
       companyProfile,
       isNoorTrucking: false // Always show GST logic now
     });
@@ -1331,6 +1385,8 @@ const sendInvoiceEmailHandler = async (req, res) => {
 
     if (tickets.length === 0) return res.status(404).json({ success: false, message: 'No tickets found' });
 
+    const processedTickets = tickets;
+
     const [compSettings] = await pool.execute('SELECT * FROM company_settings LIMIT 1');
     const companyProfile = compSettings[0] || { company_name: 'Noor Trucking Inc.', email: 'accounting@noortruckinginc.com' };
 
@@ -1343,7 +1399,7 @@ const sendInvoiceEmailHandler = async (req, res) => {
       customerPhone: customer.phone,
       startDate,
       endDate,
-      tickets,
+      tickets: processedTickets,
       companyProfile,
       isNoorTrucking
     });
@@ -1450,9 +1506,24 @@ const generateSettlement = async (req, res) => {
       [driverId, startDate, endDate]
     );
 
+    const isSubContractor = driver.pay_mode === 'Sub-contractor';
     const totalPay = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.total_pay || 0), 0);
-    const totalGst = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.gst_amount || 0), 0);
+    const totalGst = tickets.reduce((sum, ticket) => {
+      let gst = parseFloat(ticket.gst_amount || 0);
+      if (isSubContractor && gst === 0) {
+        gst = parseFloat(ticket.total_pay || 0) * 0.05;
+      }
+      return sum + gst;
+    }, 0);
     const grandTotal = totalPay + totalGst;
+
+    const processedTickets = tickets.map(t => {
+      let gst = parseFloat(t.gst_amount || 0);
+      if (isSubContractor && gst === 0) {
+        gst = parseFloat(t.total_pay || 0) * 0.05;
+      }
+      return { ...t, gst_amount: gst };
+    });
 
     return res.json({
       success: true,
@@ -1465,7 +1536,7 @@ const generateSettlement = async (req, res) => {
         },
         startDate,
         endDate,
-        tickets,
+        tickets: processedTickets,
         totalPay,
         totalGst,
         grandTotal
@@ -1509,7 +1580,7 @@ const downloadSettlement = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Driver ID, start date, and end date are required' });
     }
 
-    const [drivers] = await pool.execute('SELECT name, user_id_code FROM drivers WHERE id = ?', [driverId]);
+    const [drivers] = await pool.execute('SELECT name, user_id_code, pay_mode FROM drivers WHERE id = ?', [driverId]);
     if (drivers.length === 0) {
       console.error(`[Settlement Download] Driver not found: id=${driverId}`);
       return res.status(404).json({ success: false, message: 'Driver not found' });
@@ -1532,7 +1603,18 @@ const downloadSettlement = async (req, res) => {
       return res.status(404).json({ success: false, message: 'No tickets found for this period' });
     }
 
-    console.log(`[Settlement Download] Found ${tickets.length} tickets. Generating PDF...`);
+    console.log(`[Settlement Download] Found ${tickets.length} tickets. Processing GST...`);
+
+    const isSubContractor = driver.pay_mode === 'Sub-contractor';
+    const processedTickets = tickets.map(t => {
+      let gst = parseFloat(t.gst_amount || 0);
+      if (isSubContractor && gst === 0) {
+        gst = parseFloat(t.total_pay || 0) * 0.05;
+      }
+      return { ...t, gst_amount: gst };
+    });
+
+    console.log(`[Settlement Download] Generating PDF...`);
 
     const [compSettings] = await pool.execute('SELECT * FROM company_settings LIMIT 1');
     const companyProfile = compSettings[0] || { company_name: 'Noor Trucking Inc.', email: 'accounting@noortruckinginc.com' };
@@ -1542,7 +1624,7 @@ const downloadSettlement = async (req, res) => {
       userIdCode: driver.user_id_code,
       startDate,
       endDate,
-      tickets,
+      tickets: processedTickets,
       companyProfile
     });
 
@@ -1586,7 +1668,7 @@ const sendSettlementEmailHandler = async (req, res) => {
     }
 
     const [drivers] = await pool.execute(
-      'SELECT d.name, d.user_id_code, u.email as user_email FROM drivers d JOIN users u ON d.user_id = u.id WHERE d.id = ?',
+      'SELECT d.name, d.user_id_code, d.pay_mode, u.email as user_email FROM drivers d JOIN users u ON d.user_id = u.id WHERE d.id = ?',
       [driverId]
     );
     if (drivers.length === 0) return res.status(404).json({ success: false, message: 'Driver not found' });
@@ -1612,12 +1694,21 @@ const sendSettlementEmailHandler = async (req, res) => {
     const [compSettings] = await pool.execute('SELECT * FROM company_settings LIMIT 1');
     const companyProfile = compSettings[0] || { company_name: 'Noor Trucking Inc.', email: 'accounting@noortruckinginc.com' };
 
+    const isSubContractor = driver.pay_mode === 'Sub-contractor';
+    const processedTickets = tickets.map(t => {
+      let gst = parseFloat(t.gst_amount || 0);
+      if (isSubContractor && gst === 0) {
+        gst = parseFloat(t.total_pay || 0) * 0.05;
+      }
+      return { ...t, gst_amount: gst };
+    });
+
     const { pdfBytes, filename } = await generateSettlementPDF({
       driverName: driver.name,
       userIdCode: driver.user_id_code,
       startDate,
       endDate,
-      tickets,
+      tickets: processedTickets,
       companyProfile
     });
 
@@ -2459,6 +2550,7 @@ const getAvailableMonths = async (req, res) => {
 
 module.exports = {
   getAllDrivers,
+  getDriverById,
   createDriver,
   updateDriver,
   deleteDriver,

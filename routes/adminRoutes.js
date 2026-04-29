@@ -45,6 +45,7 @@ router.use(isAdmin);
 
 // Driver management routes
 router.get('/drivers', adminController.getAllDrivers);
+router.get('/drivers/:id', adminController.getDriverById);
 router.post('/drivers', adminController.createDriver);
 router.put('/drivers/:id', adminController.updateDriver);
 router.delete('/drivers/:id', adminController.deleteDriver);

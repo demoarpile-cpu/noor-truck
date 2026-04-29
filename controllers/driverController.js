@@ -42,12 +42,13 @@ const getDashboard = async (req, res) => {
     // Get weekly hours and pay
     const [weeklyStats] = await pool.execute(
       `SELECT 
-        COALESCE(SUM(COALESCE(pay_quantity, quantity) + extra_hours), 0) as total_hours,
-        COALESCE(SUM(total_pay + gst_amount), 0) as estimated_pay
-       FROM tickets
-       WHERE driver_id = ?
-       AND date >= ? AND date <= ?
-       AND status = 'Approved'`,
+        COALESCE(SUM(COALESCE(t.pay_quantity, t.quantity) + t.extra_hours), 0) as total_hours,
+        COALESCE(SUM(t.total_pay + (CASE WHEN d.pay_mode = 'Sub-contractor' AND t.gst_amount = 0 THEN t.total_pay * 0.05 ELSE t.gst_amount END)), 0) as estimated_pay
+       FROM tickets t
+       JOIN drivers d ON t.driver_id = d.id
+       WHERE t.driver_id = ?
+       AND t.date >= ? AND t.date <= ?
+       AND t.status = 'Approved'`,
       [actualDriverId, startOfWeek.toISOString().split('T')[0], endOfWeek.toISOString().split('T')[0]]
     );
 
@@ -146,7 +147,7 @@ const createTicket = async (req, res) => {
 
     // Get actual driver ID and default pay rate
     const [drivers] = await pool.execute(
-      'SELECT id, default_pay_rate FROM drivers WHERE (id = ? OR user_id = ?)',
+      'SELECT id, default_pay_rate, pay_mode FROM drivers WHERE (id = ? OR user_id = ?)',
       [driverId, req.user.id]
     );
 
@@ -207,6 +208,12 @@ const createTicket = async (req, res) => {
     const totalBill = parseFloat(quantity) * parseFloat(billRate);
     const totalPay = parseFloat(quantity) * parseFloat(payRate);
 
+    // Calculate GST for sub-contractors (5%)
+    let gstAmount = 0;
+    if (driver.pay_mode === 'Sub-contractor') {
+      gstAmount = totalPay * 0.05;
+    }
+
     // Store customer names as comma-separated string (for display)
     const customerString = customerNames.join(', ');
 
@@ -220,11 +227,11 @@ const createTicket = async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO tickets 
        (driver_id, customer_id, date, truck_number, customer, equipment_type,
-        ticket_number, quantity, photo_path, bill_rate, pay_rate, total_bill, total_pay, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')`,
+        ticket_number, quantity, photo_path, bill_rate, pay_rate, total_bill, total_pay, gst_amount, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')`,
       [actualDriverId, primaryCustomerId, date, truck_number, customerString,
         equipment_type, ticket_number, quantity, photoPath,
-        billRate, payRate, totalBill, totalPay]
+        billRate, payRate, totalBill, totalPay, gstAmount]
     );
 
     return res.status(201).json({
@@ -381,7 +388,13 @@ const getMyPay = async (req, res) => {
     }, 0);
     const extraHours = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.extra_hours || 0), 0);
     const grossPay = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.amount || 0), 0);
-    const totalGst = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.gst_amount || 0), 0);
+    const totalGst = tickets.reduce((sum, ticket) => {
+      let gst = parseFloat(ticket.gst_amount || 0);
+      if (ticket.pay_mode === 'Sub-contractor' && gst === 0) {
+        gst = parseFloat(ticket.amount || 0) * 0.05;
+      }
+      return sum + gst;
+    }, 0);
     const payMode = tickets.length > 0 ? tickets[0].pay_mode : 'Driver';
 
     // Determine status (all approved = "Up-to-date", otherwise "Pending")
@@ -408,7 +421,9 @@ const getMyPay = async (req, res) => {
             hours: parseFloat(ticket.hours),
             pay_quantity: pQty,
             extra_hours: parseFloat(ticket.extra_hours || 0),
-            gst_amount: parseFloat(ticket.gst_amount || 0),
+            gst_amount: (ticket.pay_mode === 'Sub-contractor' && parseFloat(ticket.gst_amount) === 0) 
+              ? parseFloat(ticket.amount) * 0.05 
+              : parseFloat(ticket.gst_amount || 0),
             amount: parseFloat(ticket.amount)
           };
         })
@@ -1044,7 +1059,7 @@ const getDriverProfile = async (req, res) => {
   try {
     const driverId = req.user.driverId || req.user.id;
     const [drivers] = await pool.execute(
-      `SELECT d.id, d.name, d.user_id_code, d.pay_mode, d.phone, d.default_pay_rate, u.email
+      `SELECT d.id, d.name, d.user_id_code, d.pay_mode, d.gst_number, d.phone, d.default_pay_rate, u.email
        FROM drivers d
        LEFT JOIN users u ON d.user_id = u.id
        WHERE (d.id = ? OR d.user_id = ?)`,
