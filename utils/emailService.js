@@ -1,21 +1,27 @@
 /**
  * Email Service Utility
- * Sends professional emails via SendGrid HTTP API (NOT SMTP)
- * Using HTTP API avoids port-blocking issues on Railway/hosted environments
+ * Sends professional emails via SMTP (Nodemailer)
+ * Supports Office 365, Gmail, and other SMTP providers
  */
 
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
 
-// Set API key once at startup
-const SENDGRID_API_KEY = process.env.SMTP_PASS || process.env.SENDGRID_API_KEY || '';
-const FROM_EMAIL = process.env.SMTP_FROM || process.env.SMTP_USER || 'accounting@noortruckinginc.com';
+// Configure SMTP transport using .env variables
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.office365.com',
+  port: parseInt(process.env.SMTP_PORT || '587'),
+  secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+  tls: {
+    ciphers: 'SSLv3',
+    rejectUnauthorized: false // Helps with some Office 365 certificate issues
+  }
+});
 
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-  console.log('[Email] ✅ SendGrid API key loaded');
-} else {
-  console.warn('[Email] ⚠️  SendGrid API key missing. Set SMTP_PASS or SENDGRID_API_KEY in .env');
-}
+const FROM_EMAIL = process.env.SMTP_FROM || process.env.SMTP_USER;
 
 // ─── PROFESSIONAL INVOICE EMAIL HTML ─────────────────────────────────────────
 const buildInvoiceEmailHtml = ({
@@ -161,14 +167,10 @@ const buildSettlementEmailHtml = ({
 
 // ─── HELPER: Build attachments array ─────────────────────────────────────────
 const buildAttachments = (pdfBuffer, filename, company) => {
-  // pdf-lib returns Uint8Array — must convert to Buffer before base64 encoding
-  const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
-
   const attachments = [{
-    content: pdfBase64,
+    content: Buffer.from(pdfBuffer),
     filename,
-    type: 'application/pdf',
-    disposition: 'attachment',
+    contentType: 'application/pdf',
   }];
 
   if (company?.company_logo && company.company_logo.startsWith('data:image')) {
@@ -177,11 +179,10 @@ const buildAttachments = (pdfBuffer, filename, company) => {
     const base64Data = company.company_logo.replace(/^data:image\/[a-z+]+;base64,/, '');
     const ext = mimeType.split('/')[1] || 'png';
     attachments.push({
-      content: base64Data,
+      content: Buffer.from(base64Data, 'base64'),
       filename: `company_logo.${ext}`,
-      type: mimeType,
-      disposition: 'inline',
-      content_id: 'company_logo_cid',
+      contentType: mimeType,
+      cid: 'company_logo_cid', // same as in html
     });
   }
 
@@ -209,8 +210,6 @@ const sendInvoiceEmail = async ({
   total = null, pdfBuffer, filename, companyInfo = null,
 }) => {
   try {
-    if (!SENDGRID_API_KEY) throw new Error('SendGrid API key not configured. Set SMTP_PASS in Railway environment variables.');
-
     const company = await getCompanyInfo(companyInfo);
     const companyName = company?.company_name || 'Noor Trucking Inc.';
     const companyEmail = company?.email || FROM_EMAIL;
@@ -232,23 +231,22 @@ const sendInvoiceEmail = async ({
       companyName, companyEmail, companyPhone, companyWebsite, companyLogoUrl,
     });
 
-    const msg = {
+    const mailOptions = {
+      from: `"${companyName}" <${FROM_EMAIL}>`,
       to,
-      from: { email: FROM_EMAIL, name: companyName },
       subject,
       html: htmlBody,
       text: `Invoice ${invoiceNumber} from ${companyName}. Period: ${startDate} to ${endDate}. Please see attached PDF.`,
       attachments: buildAttachments(pdfBuffer, filename, company),
     };
 
-    const response = await sgMail.send(msg);
-    console.log(`[Email] ✅ Invoice email sent → ${to} (StatusCode: ${response[0].statusCode})`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[Email] ✅ Invoice email sent: ${info.messageId}`);
     return { success: true, message: 'Invoice email sent successfully' };
 
   } catch (error) {
-    console.error('[Email] ❌ Failed to send invoice email:', error.response?.body || error.message);
-    const errMsg = error.response?.body?.errors?.[0]?.message || error.message;
-    return { success: false, error: errMsg, message: `Email sending failed: ${errMsg}` };
+    console.error('[Email] ❌ Failed to send invoice email:', error.message);
+    return { success: false, error: error.message, message: `Email sending failed: ${error.message}` };
   }
 };
 
@@ -258,8 +256,6 @@ const sendSettlementEmail = async ({
   totalPay = null, pdfBuffer, filename, companyInfo = null,
 }) => {
   try {
-    if (!SENDGRID_API_KEY) throw new Error('SendGrid API key not configured. Set SMTP_PASS in Railway environment variables.');
-
     const company = await getCompanyInfo(companyInfo);
     const companyName = company?.company_name || 'Noor Trucking Inc.';
     const companyEmail = company?.email || FROM_EMAIL;
@@ -279,34 +275,35 @@ const sendSettlementEmail = async ({
       companyName, companyEmail, companyLogoUrl,
     });
 
-    const msg = {
+    const mailOptions = {
+      from: `"${companyName}" <${FROM_EMAIL}>`,
       to,
-      from: { email: FROM_EMAIL, name: companyName },
       subject,
       html: htmlBody,
       text: `Settlement Statement for ${period}. Driver: ${driverName}. Total Pay: $${totalPay?.toFixed(2) || '0.00'}. Please see attached PDF.`,
       attachments: buildAttachments(pdfBuffer, filename, company),
     };
 
-    const response = await sgMail.send(msg);
-    console.log(`[Email] ✅ Settlement email sent → ${to} (StatusCode: ${response[0].statusCode})`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[Email] ✅ Settlement email sent: ${info.messageId}`);
     return { success: true, message: 'Settlement email sent successfully' };
 
   } catch (error) {
-    console.error('[Email] ❌ Failed to send settlement email:', error.response?.body || error.message);
-    const errMsg = error.response?.body?.errors?.[0]?.message || error.message;
-    return { success: false, error: errMsg, message: `Email sending failed: ${errMsg}` };
+    console.error('[Email] ❌ Failed to send settlement email:', error.message);
+    return { success: false, error: error.message, message: `Email sending failed: ${error.message}` };
   }
 };
 
 // ─── VERIFY CONNECTION ────────────────────────────────────────────────────────
 const verifyConnection = async () => {
-  if (!SENDGRID_API_KEY) {
-    return { success: false, error: 'SendGrid API key not configured' };
+  try {
+    await transporter.verify();
+    console.log('[Email] ✅ SMTP connection verified successfully');
+    return { success: true, message: 'SMTP connection verified successfully' };
+  } catch (error) {
+    console.error('[Email] ❌ SMTP connection verification failed:', error.message);
+    return { success: false, error: error.message };
   }
-  // SendGrid HTTP API — no connection to verify, just check key presence
-  console.log('[Email] ✅ SendGrid API key is configured');
-  return { success: true, message: 'SendGrid API key is configured and ready' };
 };
 
 module.exports = { sendInvoiceEmail, sendSettlementEmail, verifyConnection };
