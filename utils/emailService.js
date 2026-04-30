@@ -7,7 +7,7 @@
 const nodemailer = require('nodemailer');
 
 // Configure SMTP transport using .env variables
-const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.office365.com').trim();
+const SMTP_HOST = (process.env.SMTP_HOST || 'outlook.office365.com').trim();
 const SMTP_PORT = parseInt((process.env.SMTP_PORT || '587').trim());
 const SMTP_USER = (process.env.SMTP_USER || '').trim();
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim();
@@ -23,14 +23,14 @@ const transporter = nodemailer.createTransport({
   tls: {
     // Office 365 requires STARTTLS
     rejectUnauthorized: false,
-    minVersion: 'TLSv1.2',
-    requireTLS: true
+    minVersion: 'TLSv1.2'
   },
+  family: 4, // Force IPv4 (Helps with cloud network issues)
   debug: true, // Enable debug output in logs
   logger: true, // Log to console
-  connectionTimeout: 20000, // Increased to 20 seconds
-  greetingTimeout: 20000,
-  socketTimeout: 30000,
+  connectionTimeout: 30000, // 30 seconds
+  greetingTimeout: 30000,
+  socketTimeout: 45000,
 });
 
 const FROM_EMAIL = (process.env.SMTP_FROM || SMTP_USER).trim();

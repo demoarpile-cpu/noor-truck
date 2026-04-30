@@ -39,7 +39,25 @@ const upload = multer({
   }
 });
 
-// Apply authentication middleware to all routes
+// SMTP connection test route — GET /admin/test-smtp
+router.get('/test-smtp', async (req, res) => {
+  try {
+    const { verifyConnection } = require('../utils/emailService');
+    const result = await verifyConnection();
+    if (result.success) {
+      return res.json({ success: true, message: '✅ SMTP connection is working correctly!' });
+    }
+    return res.status(500).json({
+      success: false,
+      message: '❌ SMTP connection failed.',
+      error: result.error
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Apply authentication middleware to all routes BELOW this line
 router.use(authenticate);
 router.use(isAdmin);
 
