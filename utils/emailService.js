@@ -16,9 +16,14 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS,
   },
   tls: {
-    ciphers: 'SSLv3',
-    rejectUnauthorized: false // Helps with some Office 365 certificate issues
-  }
+    // Office 365 requires STARTTLS, and sometimes fails with specific ciphers
+    // Removing SSLv3 as it's deprecated and often blocked
+    rejectUnauthorized: false,
+    minVersion: 'TLSv1.2'
+  },
+  connectionTimeout: 10000, // 10 seconds
+  greetingTimeout: 10000,
+  socketTimeout: 30000, // 30 seconds
 });
 
 const FROM_EMAIL = process.env.SMTP_FROM || process.env.SMTP_USER;
