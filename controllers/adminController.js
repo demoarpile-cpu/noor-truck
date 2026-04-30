@@ -1712,7 +1712,7 @@ const sendSettlementEmailHandler = async (req, res) => {
       companyProfile
     });
 
-    const totalPay = tickets.reduce((sum, t) => sum + parseFloat(t.total_pay || 0) + parseFloat(t.gst_amount || 0), 0);
+    const totalPay = processedTickets.reduce((sum, t) => sum + parseFloat(t.total_pay || 0) + parseFloat(t.gst_amount || 0), 0);
 
     const emailResult = await sendSettlementEmail({
       to: recipientEmail,
