@@ -7,26 +7,33 @@
 const nodemailer = require('nodemailer');
 
 // Configure SMTP transport using .env variables
+const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.office365.com').trim();
+const SMTP_PORT = parseInt((process.env.SMTP_PORT || '587').trim());
+const SMTP_USER = (process.env.SMTP_USER || '').trim();
+const SMTP_PASS = (process.env.SMTP_PASS || '').trim();
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.office365.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465, // true for 465, false for other ports
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: SMTP_USER,
+    pass: SMTP_PASS,
   },
   tls: {
-    // Office 365 requires STARTTLS, and sometimes fails with specific ciphers
-    // Removing SSLv3 as it's deprecated and often blocked
+    // Office 365 requires STARTTLS
     rejectUnauthorized: false,
-    minVersion: 'TLSv1.2'
+    minVersion: 'TLSv1.2',
+    requireTLS: true
   },
-  connectionTimeout: 10000, // 10 seconds
-  greetingTimeout: 10000,
-  socketTimeout: 30000, // 30 seconds
+  debug: true, // Enable debug output in logs
+  logger: true, // Log to console
+  connectionTimeout: 20000, // Increased to 20 seconds
+  greetingTimeout: 20000,
+  socketTimeout: 30000,
 });
 
-const FROM_EMAIL = process.env.SMTP_FROM || process.env.SMTP_USER;
+const FROM_EMAIL = (process.env.SMTP_FROM || SMTP_USER).trim();
 
 // ─── PROFESSIONAL INVOICE EMAIL HTML ─────────────────────────────────────────
 const buildInvoiceEmailHtml = ({
